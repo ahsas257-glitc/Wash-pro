@@ -9,8 +9,6 @@ st.set_page_config(page_title="Home", layout="wide")
 st.title("Home")
 
 selected_tool = st.selectbox("Select a tool", TOOLS, index=TOOLS.index("Tool 6"))
-import streamlit as st
-st.write("Has gcp_service_account secrets?", "gcp_service_account" in st.secrets)
 
 # Load TPM IDs from the selected worksheet
 ws = open_worksheet(GOOGLE_SHEET_ID, selected_tool)
@@ -29,4 +27,5 @@ if st.button("Search", type="primary", disabled=not selected_tpm_id):
     # Map worksheet name 'Tool 6' -> page file 'Tool_6.py'
     page_file = selected_tool.replace(" ", "_") + ".py"
     st.switch_page(f"pages/{page_file}")
+
 
