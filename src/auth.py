@@ -1,66 +1,70 @@
 # src/auth.py
+from __future__ import annotations
+
 import json
-import os
-import tempfile
+from pathlib import Path
 from typing import Optional
 
+import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 
-
+# Scopes needed for Google Sheets + Drive
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
-
-def _project_root() -> str:
-    return os.path.dirname(os.path.dirname(__file__))
-
-
-def get_local_credentials_path() -> str:
+def _find_credentials_json() -> Optional[Path]:
     """
-    Local development:
-    Put your credentials.json in: <project_root>/code/credentials.json or <project_root>/credentials.json
-    Update this path if your file location is different.
+    Try to find credentials.json in common local paths.
+    Returns path if found, else None.
     """
-    root = _project_root()
     candidates = [
-        os.path.join(root, "code", "credentials.json"),
-        os.path.join(root, "credentials.json"),
+        Path("credentials.json"),
+        Path(".streamlit") / "credentials.json",
+        Path("secrets") / "credentials.json",
     ]
     for p in candidates:
-        if os.path.exists(p):
+        if p.exists() and p.is_file():
             return p
-    raise FileNotFoundError("credentials.json not found. Add it locally or use Streamlit Cloud secrets.")
+    return None
 
-
-def get_gspread_client(credentials_path: Optional[str] = None):
+def _creds_from_secrets() -> Credentials:
     """
-    Returns an authorized gspread client.
-
-    Streamlit Cloud option:
-      - Add your service account JSON into st.secrets["gcp_service_account"].
-    Local option:
-      - Provide credentials_path or place credentials.json in known locations.
+    Build Google Credentials from Streamlit Cloud secrets.
+    Expects a TOML section: [gcp_service_account]
     """
-    # Lazy import to avoid requiring .streamlit in non-UI modules
-    try:
-        import streamlit as st
-        secrets_available = hasattr(st, "secrets") and ("gcp_service_account" in st.secrets)
-    except Exception:
-        secrets_available = False
+    if "gcp_service_account" not in st.secrets:
+        raise FileNotFoundError(
+            "credentials.json not found and st.secrets['gcp_service_account'] is missing. "
+            "Add service account JSON to Streamlit Secrets under [gcp_service_account]."
+        )
 
-    if secrets_available:
-        # Streamlit Cloud: read JSON from secrets and write to temp file
-        import streamlit as st
-        sa_info = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-        return gspread.authorize(creds)
+    info = dict(st.secrets["gcp_service_account"])
 
-    # Local: read from file path
-    if credentials_path is None:
-        credentials_path = get_local_credentials_path()
+    # Some people store private_key without proper newlines; normalize
+    pk = info.get("private_key", "")
+    if pk and "\\n" in pk:
+        info["private_key"] = pk.replace("\\n", "\n")
 
-    creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
+    return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+def _creds_from_file(path: Path) -> Credentials:
+    info = json.loads(path.read_text(encoding="utf-8"))
+    return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+def get_gspread_client():
+    """
+    Returns an authenticated gspread client.
+    - Local: uses credentials.json if present
+    - Streamlit Cloud: uses st.secrets["gcp_service_account"]
+    """
+    local_path = _find_credentials_json()
+
+    if local_path:
+        creds = _creds_from_file(local_path)
+    else:
+        creds = _creds_from_secrets()
+
     return gspread.authorize(creds)
