@@ -15,6 +15,7 @@ from uuid import uuid4
 from src.config import GOOGLE_SHEET_ID, TPM_COL
 from src.data_processing import open_worksheet, get_all_records, find_by_tpm_id
 from src.report_builder import build_tool6_full_report_docx
+from design.components.tool6_ui import topbar
 
 from design.components.tool6_ui import (
     inject_tool6_design,
@@ -29,23 +30,18 @@ from design.components.tool6_ui import (
 # UI / Design
 # =============================
 st.set_page_config(page_title="Tool 6", layout="wide")
-st.title("Tool 6 — Report Generator")
 
 project_root = os.path.dirname(os.path.dirname(__file__))
 
-# ✅ Theme switch (Dark / Light) — placed BEFORE inject_tool6_design
-with st.sidebar:
-    st.markdown("### Appearance")
-    theme = st.radio("Theme", ["dark", "light"], index=0, horizontal=True)
-
 inject_tool6_design(
     project_root=project_root,
-    theme=theme,  # ✅ اینجا اضافه شد
     background_image_rel="assets/images/Logo_of_PPC.png",
-    noise_image_rel="design/images/bg_noise.png",
+    noise_image_rel="assets/images/bg_noise.png",
     intensity=0.09,
     enable_parallax=True
 )
+
+st.title("Tool 6 — Report Generator")
 
 
 # =============================
@@ -862,3 +858,4 @@ with gen:
         )
 
     card_close()
+
