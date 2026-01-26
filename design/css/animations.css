@@ -1,0 +1,41 @@
+/* design/css/animations.css */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes floaty {
+  0%   { transform: translate3d(0,0,0); }
+  50%  { transform: translate3d(0,-6px,0); }
+  100% { transform: translate3d(0,0,0); }
+}
+@keyframes shimmer {
+  0%   { transform: translateX(-120%) rotate(12deg); opacity: 0; }
+  25%  { opacity: .85; }
+  100% { transform: translateX(120%) rotate(12deg); opacity: 0; }
+}
+
+.fade-in { animation: fadeInUp .65s cubic-bezier(.2,.9,.2,1) both; }
+
+.hover-float:hover { animation: floaty 1.8s ease-in-out infinite; }
+
+.shimmer::after{
+  content:"";
+  position:absolute;
+  top:-40%;
+  left:-40%;
+  width:60%;
+  height:180%;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(255,255,255,0.20),
+    transparent
+  );
+  filter: blur(1px);
+  transform: translateX(-120%) rotate(12deg);
+  opacity:0;
+  pointer-events:none;
+}
+.shimmer:hover::after{
+  animation: shimmer 1.3s ease-in-out both;
+}
