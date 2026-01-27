@@ -33,18 +33,32 @@ def _read_text(path: Path) -> str:
     except Exception:
         return ""
 
+def _guess_image_mime(ext: str) -> str:
+    ext = (ext or "").lower().lstrip(".")
+    if ext in ("jpg", "jpeg"):
+        return "image/jpeg"
+    if ext == "png":
+        return "image/png"
+    if ext == "webp":
+        return "image/webp"
+    if ext == "svg":
+        return "image/svg+xml"
+    if ext == "gif":
+        return "image/gif"
+    # fallback
+    return "image/png"
+
 def _img_to_data_uri(path: Path) -> str:
-    if not path.exists():
+    if not path or not path.exists():
         return ""
-    ext = path.suffix.lower().replace(".", "")
-    mime = "png" if ext == "png" else ext
+    mime = _guess_image_mime(path.suffix)
     data = base64.b64encode(path.read_bytes()).decode("utf-8")
-    return f"data:image/{mime};base64,{data}"
+    return f"data:{mime};base64,{data}"
 
 def _inject_theme_sync_js():
     """
-    ✅ Sync Streamlit theme with CSS by setting:
-       html[data-theme="dark|light"]
+    Sync Streamlit theme with CSS by setting:
+    html[data-theme="dark|light"]
     """
     st.markdown(
         """
@@ -102,7 +116,9 @@ def _inject_theme_sync_js():
   applyTheme();
   const obs = new MutationObserver(() => applyTheme());
   obs.observe(html, { attributes: true, attributeFilter: ['style', 'class'] });
-  setInterval(applyTheme, 800);
+
+  // light touch: less CPU than 800ms
+  setInterval(applyTheme, 1500);
 })();
 </script>
         """,
@@ -111,8 +127,7 @@ def _inject_theme_sync_js():
 
 def _inject_single_container_mark_js():
     """
-    ✅ Mark ONLY one stAppViewContainer as the watermark host:
-       [data-ppc-wm="1"]
+    Mark ONLY one stAppViewContainer as the watermark host: [data-ppc-wm="1"]
     Prevents double watermark when Streamlit renders multiple containers.
     """
     st.markdown(
@@ -140,9 +155,10 @@ def _inject_single_container_mark_js():
   }
 
   mark();
+
+  // observe DOM changes (no need to also do fast interval)
   const obs = new MutationObserver(mark);
-  obs.observe(root.documentElement, { childList:true, subtree:true, attributes:true });
-  setInterval(mark, 1200);
+  obs.observe(root.documentElement, { childList:true, subtree:true });
 })();
 </script>
         """,
@@ -151,7 +167,7 @@ def _inject_single_container_mark_js():
 
 def _inject_watermark_parallax_js():
     """
-    ✅ Parallax ONLY for watermark vars (no content transform!)
+    Parallax ONLY for watermark vars (no content transform!)
     Updates: --wm-par-x, --wm-par-y on the marked container.
     """
     st.markdown(
@@ -225,6 +241,10 @@ def _inject_tilt_js():
 
   init();
   setTimeout(init, 350);
+
+  // re-init if Streamlit re-renders parts of DOM
+  const obs = new MutationObserver(() => init());
+  obs.observe(root.documentElement, { childList:true, subtree:true });
 })();
 </script>
         """,
@@ -243,7 +263,7 @@ def inject_tool6_design(
 ):
     root = Path(project_root) if project_root else Path(".")
 
-    # ✅ ONE unified CSS (Light/Dark inside it)
+    # Unified CSS (Light/Dark inside it)
     css_liquid = _read_text(root / "design" / "css" / "liquid_glass.css")
     css_anim = _read_text(root / "design" / "css" / "animations.css")
 
@@ -256,16 +276,14 @@ def inject_tool6_design(
 {css_liquid}
 {css_anim}
 
-/* ✅ SAFE RESET: do NOT touch html/body/.stApp background (your colorful bg lives there!) */
+/* SAFE RESET: do NOT touch html/body/.stApp background */
 [data-testid="stAppViewContainer"],
 [data-testid="stMain"],
 [data-testid="stSidebar"] {{
   background-image: none !important;
 }}
 
-/* =========================================
-   Watermark vars
-   ========================================= */
+/* Watermark vars */
 :root {{
   --bg-logo: url("{bg_uri}");
   --bg-intensity: {float(intensity)};
@@ -274,9 +292,6 @@ def inject_tool6_design(
   --wm-size: min(68vmin, 760px);
 }}
 
-/* ---------------------------------
-   Watermark ONLY on the marked container
----------------------------------- */
 [data-testid="stAppViewContainer"] {{
   position: relative;
 }}
@@ -287,7 +302,7 @@ def inject_tool6_design(
   content: none !important;
 }}
 
-/* ✅ watermark */
+/* watermark only on the marked container */
 [data-testid="stAppViewContainer"][data-ppc-wm="1"]::before {{
   content:"";
   position: fixed;
@@ -306,21 +321,15 @@ def inject_tool6_design(
   will-change: transform, opacity;
 }}
 
-/* ✅ keep content above */
+/* keep content above watermark */
 .block-container {{
   position: relative;
   z-index: 10;
 }}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    # Optional noise overlay (between watermark and content)
-    if noise_uri:
-        st.markdown(
-            f"""
-<style>
+/* optional noise layer (between watermark and content) */
+{"".join([
+f"""
 .noise-layer {{
   position: fixed;
   inset: 0;
@@ -339,19 +348,20 @@ def inject_tool6_design(
   75%{{ transform: translate3d(-1%,-1%,0); }}
   100%{{ transform: translate3d(0,0,0); }}
 }}
+""" if noise_uri else ""
+])}
 </style>
-<div class="noise-layer"></div>
-            """,
-            unsafe_allow_html=True,
-        )
-    # Optional noise overlay
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ✅ inject layers ONCE (fix: previously duplicated)
     if noise_uri:
         st.markdown('<div class="noise-layer"></div>', unsafe_allow_html=True)
 
-    # ✅ Liquid overlay (always safe)
     st.markdown('<div class="t6-liquid-overlay"></div>', unsafe_allow_html=True)
 
-    # ✅ Order matters
+    # order matters
     _inject_single_container_mark_js()
     _inject_theme_sync_js()
 
