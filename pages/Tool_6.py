@@ -27,6 +27,16 @@ from design.components.tool6_ui import (
 )
 
 # =============================
+# Optional: pysurveycto (API attachments)
+# =============================
+try:
+    import pysurveycto  # pip install pysurveycto
+    _HAS_PYSURVEYCTO = True
+except Exception:
+    pysurveycto = None
+    _HAS_PYSURVEYCTO = False
+
+# =============================
 # UI / Design
 # =============================
 st.set_page_config(page_title="Tool 6", layout="wide")
@@ -90,6 +100,7 @@ def _to_clean_png_bytes(img_bytes: bytes) -> bytes:
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
 
+
 # =============================
 # SurveyCTO Auth + Media loaders
 # =============================
@@ -100,11 +111,74 @@ def get_auth() -> Optional[HTTPBasicAuth]:
     pwd  = pwd  or st.session_state.get("scto_pass", "")
     return HTTPBasicAuth(user, pwd) if user and pwd else None
 
+def _is_scto_view_attachment(url: str) -> bool:
+    u = (url or "").lower()
+    return "surveycto.com/view/submission-attachment" in u
+
+# ---- Optional API-first attachment download (safe fallback to current requests flow)
+SCTO_SERVER = "act4performance"
+FORM_ID = "wash06_solar_water_supply_V2"
+
+def get_scto_client():
+    """
+    Create SurveyCTO client using the user's entered credentials (sidebar).
+    Stored only in session (no permanent storage).
+    """
+    if not _HAS_PYSURVEYCTO:
+        return None
+    user = st.session_state.get("scto_user", "").strip()
+    pwd = st.session_state.get("scto_pass", "").strip()
+    if not user or not pwd:
+        return None
+    try:
+        return pysurveycto.SurveyCTOObject(SCTO_SERVER, user, pwd)
+    except Exception:
+        return None
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def scto_get_attachment_bytes(url: str, user_key: str) -> Optional[bytes]:
+    """
+    Try to download attachment bytes via SurveyCTO API client (if available).
+    If it fails, returns None and caller falls back to requests-based method.
+    """
+    scto = get_scto_client()
+    if scto is None:
+        return None
+    try:
+        b = scto.get_attachment(url)
+        if not b:
+            return None
+        if _looks_like_html(b):
+            return None
+        return b
+    except Exception:
+        return None
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], str, str]:
     auth = get_auth()
     if auth is None:
         return False, None, "Missing SurveyCTO credentials.", ""
+
+    # ✅ Try API-first for SurveyCTO attachment links (if pysurveycto installed)
+    if _is_scto_view_attachment(url):
+        b = scto_get_attachment_bytes(url, user_key=user_key or "user")
+        if b:
+            # mime guess (fallback)
+            ul = (url or "").lower()
+            if ".mp3" in ul:
+                mime = "audio/mpeg"
+            elif ".wav" in ul:
+                mime = "audio/wav"
+            elif ".m4a" in ul:
+                mime = "audio/mp4"
+            elif ".ogg" in ul:
+                mime = "audio/ogg"
+            elif ".opus" in ul:
+                mime = "audio/opus"
+            else:
+                mime = "audio/aac"
+            return True, b, "OK", mime
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -138,6 +212,8 @@ def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
                 mime = "audio/mp4"
             elif ".ogg" in ul:
                 mime = "audio/ogg"
+            elif ".opus" in ul:
+                mime = "audio/opus"
             else:
                 mime = "audio/aac"
 
@@ -151,6 +227,17 @@ def fetch_image_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
     auth = get_auth()
     if auth is None:
         return False, None, "Missing SurveyCTO credentials."
+
+    # ✅ Try API-first for SurveyCTO attachment links (if pysurveycto installed)
+    if _is_scto_view_attachment(url):
+        b = scto_get_attachment_bytes(url, user_key=user_key or "user")
+        if b:
+            try:
+                clean = _to_clean_png_bytes(b)
+                return True, clean, "OK"
+            except Exception:
+                # if bytes are not a valid image, fall back
+                pass
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -182,6 +269,7 @@ def fetch_audio(url: str) -> Tuple[bool, Optional[bytes], str, str]:
 def fetch_image(url: str) -> Tuple[bool, Optional[bytes], str]:
     user_key = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "") or st.session_state.get("scto_user", "")
     return fetch_image_cached(url, user_key=user_key or "user")
+
 
 # =============================
 # URL normalize (Drive only)
@@ -272,6 +360,7 @@ def cover_suitability(img: Image.Image):
         issues.append("May be blurry.")
 
     return issues, {"w": w, "h": h, "ratio": ratio, "brightness": brightness, "sharpness": sharpness}
+
 
 # =============================
 # TPM selection
@@ -474,9 +563,18 @@ with photo_box:
                     except Exception:
                         pass
             else:
-                st.warning(f"Could not load photo in Streamlit: {msg}")
-                st.markdown(f"Open in browser: [{sel_url}]({sel_url})")
-                up = st.file_uploader("Upload this photo (fallback)", type=["jpg", "jpeg", "png"], key=f"upl_{sel_field}")
+                # ✅ NO LINK SHOWN
+                st.error("Photo could not be loaded.")
+                st.caption(f"Reason: {msg}")
+                st.info(
+                    "Please login to SurveyCTO in the sidebar (email + password). "
+                    "If you already logged in, your account may not have permission to download attachments."
+                )
+                up = st.file_uploader(
+                    "Upload this photo (fallback)",
+                    type=["jpg", "jpeg", "png"],
+                    key=f"upl_{sel_field}",
+                )
                 if up is not None:
                     b = up.read()
                     try:
@@ -561,9 +659,13 @@ with audio_box:
                 st.session_state["audio_notes"][sel_url] = note
 
             else:
-                st.warning(f"Could not load audio: {msg}")
-                st.markdown(f"[Open in browser]({sel_url})")
-                st.caption("If it opens as a login page, check SurveyCTO credentials in the sidebar.")
+                # ✅ NO LINK SHOWN
+                st.error("Audio could not be loaded.")
+                st.caption(f"Reason: {msg}")
+                st.info(
+                    "Please login to SurveyCTO in the sidebar (email + password). "
+                    "If you already logged in, your account may not have permission to download attachments."
+                )
 
         st.markdown("---")
         st.write("**Selected summary:**")
@@ -724,8 +826,8 @@ with box5:
                         if u in st.session_state["photo_bytes"]:
                             st.image(st.session_state["photo_bytes"][u], use_container_width=True)
                         else:
-                            st.caption("⚠️ Not loaded")
-                            st.markdown(f"[Open]({u})")
+                            # ✅ NO LINK SHOWN
+                            st.caption("⚠️ Not loaded. Load it from the Photo Viewer above or upload fallback there.")
 
             obs = st.text_area(
                 "Observation / Description",
@@ -858,4 +960,3 @@ with gen:
         )
 
     card_close()
-
