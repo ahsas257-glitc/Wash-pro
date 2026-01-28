@@ -8,7 +8,6 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import requests
-from requests.auth import HTTPBasicAuth
 import pandas as pd
 from uuid import uuid4
 
@@ -25,16 +24,6 @@ from design.components.tool6_ui import (
     sticky_open,
     sticky_close,
 )
-
-# =============================
-# Optional: pysurveycto (API attachments)
-# =============================
-try:
-    import pysurveycto  # pip install pysurveycto
-    _HAS_PYSURVEYCTO = True
-except Exception:
-    pysurveycto = None
-    _HAS_PYSURVEYCTO = False
 
 # =============================
 # UI / Design
@@ -102,102 +91,21 @@ def _to_clean_png_bytes(img_bytes: bytes) -> bytes:
 
 
 # =============================
-# SurveyCTO Auth + Media loaders
+# Public Media Loaders (No SurveyCTO / No Account)
 # =============================
-def get_auth() -> Optional[HTTPBasicAuth]:
-    user = st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else ""
-    pwd  = st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else ""
-    user = user or st.session_state.get("scto_user", "")
-    pwd  = pwd  or st.session_state.get("scto_pass", "")
-    return HTTPBasicAuth(user, pwd) if user and pwd else None
-
-def _is_scto_view_attachment(url: str) -> bool:
-    u = (url or "").lower()
-    return "surveycto.com/view/submission-attachment" in u
-
-# ---- Optional API-first attachment download (safe fallback to current requests flow)
-# ---- Optional API-first attachment download (safe fallback to current requests flow)
-SCTO_SERVER = st.secrets.get("SURVEYCTO_SERVER", "act4performance") if hasattr(st, "secrets") else "act4performance"
-
-def get_scto_client():
-    """
-    Create SurveyCTO client using secrets first; fallback to sidebar/session.
-    """
-    if not _HAS_PYSURVEYCTO:
-        return None
-
-    # ✅ Prefer secrets
-    user = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "").strip()
-    pwd  = (st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else "").strip()
-
-    # Fallback to sidebar/session
-    if not user:
-        user = st.session_state.get("scto_user", "").strip()
-    if not pwd:
-        pwd = st.session_state.get("scto_pass", "").strip()
-
-    if not user or not pwd:
-        return None
-
-    try:
-        return pysurveycto.SurveyCTOObject(SCTO_SERVER, user, pwd)
-    except Exception:
-        return None
-
-
 @st.cache_data(show_spinner=False, ttl=3600)
-def scto_get_attachment_bytes(url: str, user_key: str) -> Optional[bytes]:
+def fetch_audio_cached(url: str) -> Tuple[bool, Optional[bytes], str, str]:
     """
-    Try to download attachment bytes via SurveyCTO API client (if available).
-    If it fails, returns None and caller falls back to requests-based method.
+    Download audio from a public URL (Drive direct/download or direct file links).
+    No authentication is used.
     """
-    scto = get_scto_client()
-    if scto is None:
-        return None
-    try:
-        b = scto.get_attachment(url)
-        if not b:
-            return None
-        if _looks_like_html(b):
-            return None
-        return b
-    except Exception:
-        return None
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], str, str]:
-    auth = get_auth()
-    if auth is None:
-        return False, None, "Missing SurveyCTO credentials.", ""
-
-    # ✅ Try API-first for SurveyCTO attachment links (if pysurveycto installed)
-    if _is_scto_view_attachment(url):
-        b = scto_get_attachment_bytes(url, user_key=user_key or "user")
-        if b:
-            # mime guess (fallback)
-            ul = (url or "").lower()
-            if ".mp3" in ul:
-                mime = "audio/mpeg"
-            elif ".wav" in ul:
-                mime = "audio/wav"
-            elif ".m4a" in ul:
-                mime = "audio/mp4"
-            elif ".ogg" in ul:
-                mime = "audio/ogg"
-            elif ".opus" in ul:
-                mime = "audio/opus"
-            else:
-                mime = "audio/aac"
-            return True, b, "OK", mime
-
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "audio/*,*/*;q=0.8",
-        "Referer": "https://act4performance.surveycto.com/",
     }
 
     try:
-        r = requests.get(url, headers=headers, timeout=35, allow_redirects=True, auth=auth)
+        r = requests.get(url, headers=headers, timeout=35, allow_redirects=True)
         ctype = (r.headers.get("Content-Type") or "").lower()
 
         if r.status_code >= 400:
@@ -205,7 +113,7 @@ def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
 
         data = r.content or b""
         if "text/html" in ctype or _looks_like_html(data):
-            return False, None, "Auth/session required (HTML response).", ctype
+            return False, None, "Private/protected link (HTML response). Please upload file.", ctype
 
         # Normalize MIME
         if ctype.startswith("audio/"):
@@ -232,31 +140,20 @@ def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
     except Exception as e:
         return False, None, str(e), ""
 
+
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_image_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], str]:
-    auth = get_auth()
-    if auth is None:
-        return False, None, "Missing SurveyCTO credentials."
-
-    # ✅ Try API-first for SurveyCTO attachment links (if pysurveycto installed)
-    if _is_scto_view_attachment(url):
-        b = scto_get_attachment_bytes(url, user_key=user_key or "user")
-        if b:
-            try:
-                clean = _to_clean_png_bytes(b)
-                return True, clean, "OK"
-            except Exception:
-                # if bytes are not a valid image, fall back
-                pass
-
+def fetch_image_cached(url: str) -> Tuple[bool, Optional[bytes], str]:
+    """
+    Download image from a public URL (Drive direct/download or direct image links).
+    No authentication is used.
+    """
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Referer": "https://act4performance.surveycto.com/",
     }
 
     try:
-        r = requests.get(url, headers=headers, timeout=25, allow_redirects=True, auth=auth)
+        r = requests.get(url, headers=headers, timeout=25, allow_redirects=True)
         ctype = (r.headers.get("Content-Type") or "").lower()
 
         if r.status_code >= 400:
@@ -264,7 +161,7 @@ def fetch_image_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
 
         data = r.content or b""
         if "text/html" in ctype or _looks_like_html(data):
-            return False, None, "Auth/session required (HTML response)."
+            return False, None, "Private/protected link (HTML response). Please upload file."
 
         clean = _to_clean_png_bytes(data)
         return True, clean, "OK"
@@ -272,13 +169,12 @@ def fetch_image_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], 
     except Exception as e:
         return False, None, str(e)
 
+
 def fetch_audio(url: str) -> Tuple[bool, Optional[bytes], str, str]:
-    user_key = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "") or st.session_state.get("scto_user", "")
-    return fetch_audio_cached(url, user_key=user_key or "user")
+    return fetch_audio_cached(url)
 
 def fetch_image(url: str) -> Tuple[bool, Optional[bytes], str]:
-    user_key = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "") or st.session_state.get("scto_user", "")
-    return fetch_image_cached(url, user_key=user_key or "user")
+    return fetch_image_cached(url)
 
 
 # =============================
@@ -301,7 +197,12 @@ def normalize_image_url(url: str) -> str:
 
     return u
 
+
 def extract_photo_links(row: dict) -> List[Dict[str, str]]:
+    """
+    Only collects likely public image links (direct image or Google Drive).
+    SurveyCTO attachment links are ignored (since no auth exists anymore).
+    """
     links = []
     for k, v in (row or {}).items():
         s0 = safe_str(v).strip()
@@ -311,9 +212,8 @@ def extract_photo_links(row: dict) -> List[Dict[str, str]]:
         s_low = s0.lower()
         is_img = any(ext in s_low for ext in [".jpg", ".jpeg", ".png", ".webp"])
         is_drive = ("drive.google.com" in s_low) or ("googleusercontent.com" in s_low)
-        is_scto = "surveycto.com/view/submission-attachment" in s_low
 
-        if is_img or is_drive or is_scto:
+        if is_img or is_drive:
             links.append({"field": k, "url": normalize_image_url(s0)})
 
     uniq, seen = [], set()
@@ -324,7 +224,12 @@ def extract_photo_links(row: dict) -> List[Dict[str, str]]:
         uniq.append(it)
     return uniq
 
+
 def extract_audio_links(row: dict) -> List[Dict[str, str]]:
+    """
+    Only collects likely public audio links (direct audio or Google Drive).
+    SurveyCTO attachment links are ignored (since no auth exists anymore).
+    """
     links = []
     for k, v in (row or {}).items():
         s0 = safe_str(v).strip()
@@ -334,9 +239,8 @@ def extract_audio_links(row: dict) -> List[Dict[str, str]]:
 
         is_audio = any(ext in s_low for ext in [".aac", ".mp3", ".wav", ".m4a", ".ogg", ".opus"])
         is_drive = ("drive.google.com" in s_low) or ("googleusercontent.com" in s_low)
-        is_scto = "surveycto.com/view/submission-attachment" in s_low
 
-        if is_audio or (is_scto and ("audio" in k.lower() or "voice" in k.lower() or "record" in k.lower())):
+        if is_audio or is_drive:
             links.append({"field": k, "url": normalize_image_url(s0)})
 
     uniq, seen = [], set()
@@ -346,6 +250,7 @@ def extract_audio_links(row: dict) -> List[Dict[str, str]]:
         seen.add(it["url"])
         uniq.append(it)
     return uniq
+
 
 def cover_suitability(img: Image.Image):
     w, h = img.size
@@ -386,29 +291,6 @@ sticky_open()
 st.info(f"Selected TPM ID: {tpm_id}")
 sticky_close()
 
-# =============================
-# Sidebar Login
-# =============================
-with st.sidebar:
-    st.subheader("SurveyCTO Login")
-
-    s_user = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "")
-    s_pass = (st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else "")
-    has_secrets = bool(str(s_user).strip()) and bool(str(s_pass).strip())
-
-    if has_secrets:
-        st.success("✅ SurveyCTO credentials loaded from Secrets")
-        st.caption("No login required.")
-        # Optional: show server value (safe)
-        s_server = (st.secrets.get("SURVEYCTO_SERVER", "") if hasattr(st, "secrets") else "")
-        if str(s_server).strip():
-            st.caption(f"Server: {s_server}")
-    else:
-        st.warning("SurveyCTO secrets not found. Please login below.")
-        st.caption("Recommended: set .streamlit/secrets.toml (SURVEYCTO_USER / SURVEYCTO_PASS).")
-        st.text_input("Username", key="scto_user")
-        st.text_input("Password", type="password", key="scto_pass")
-        st.caption("User must have permission to access attachments.")
 
 # =============================
 # Load data
@@ -420,6 +302,7 @@ if not row:
     st.error("The selected TPM ID was not found in the Tool 6 worksheet.")
     st.stop()
 
+
 # =============================
 # Audio state
 # =============================
@@ -428,6 +311,7 @@ st.session_state.setdefault("audio_bytes", {})
 st.session_state.setdefault("audio_field", {})
 st.session_state.setdefault("audio_notes", {})
 st.session_state.setdefault("audio_mime", {})
+
 
 # =============================
 # Defaults + hints
@@ -463,6 +347,7 @@ hints = {
     "Reason for delay": "If empty, DOCX shows N/A.",
 }
 
+
 # =============================
 # Overview
 # =============================
@@ -482,6 +367,7 @@ with box:
     with b: kv("GPS", defaults["GPS points"])
     with c: kv("Date of Visit", defaults["Date of Visit"])
     card_close("Review values. Update in Edit if needed.")
+
 
 # =============================
 # Edit
@@ -525,7 +411,6 @@ with edit_box:
         card_close("Use N/A when not applicable.")
 
 st.success("Edits are saved for this session.")
-
 # =============================
 # Photos
 # =============================
@@ -540,7 +425,7 @@ photo_box = st.container(height=720, border=True)
 with photo_box:
     if not photos:
         st.warning("No photo links found for this TPM ID.")
-        st.caption("Ensure attachment URLs exist in the dataset.")
+        st.caption("Ensure attachment URLs exist in the dataset (public links).")
     else:
         card_open("Photo Viewer")
 
@@ -591,8 +476,8 @@ with photo_box:
                 st.error("Photo could not be loaded.")
                 st.caption(f"Reason: {msg}")
                 st.info(
-                    "Please login to SurveyCTO in the sidebar (email + password). "
-                    "If you already logged in, your account may not have permission to download attachments."
+                    "This looks like a private/protected link. "
+                    "Please upload the photo below as a fallback."
                 )
                 up = st.file_uploader(
                     "Upload this photo (fallback)",
@@ -628,7 +513,7 @@ audio_box = st.container(height=520, border=True)
 with audio_box:
     if not audios:
         st.info("No audio links found for this TPM ID.")
-        st.caption("If audio fields exist, ensure URLs are present (SurveyCTO attachment links).")
+        st.caption("If audio fields exist, ensure URLs are present (public links).")
     else:
         card_open("Audio Player")
 
@@ -687,8 +572,8 @@ with audio_box:
                 st.error("Audio could not be loaded.")
                 st.caption(f"Reason: {msg}")
                 st.info(
-                    "Please login to SurveyCTO in the sidebar (email + password). "
-                    "If you already logged in, your account may not have permission to download attachments."
+                    "This looks like a private/protected link. "
+                    "Please provide a public link or keep notes manually."
                 )
 
         st.markdown("---")
@@ -905,7 +790,6 @@ with box5:
             }
 
     card_close("You can remove a component once, and it will disappear everywhere.")
-
 sections_out = []
 for comp in st.session_state["components_list"]:
     uid = comp["uid"]
@@ -984,4 +868,3 @@ with gen:
         )
 
     card_close()
-
