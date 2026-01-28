@@ -116,24 +116,34 @@ def _is_scto_view_attachment(url: str) -> bool:
     return "surveycto.com/view/submission-attachment" in u
 
 # ---- Optional API-first attachment download (safe fallback to current requests flow)
-SCTO_SERVER = "act4performance"
-FORM_ID = "wash06_solar_water_supply_V2"
+# ---- Optional API-first attachment download (safe fallback to current requests flow)
+SCTO_SERVER = st.secrets.get("SURVEYCTO_SERVER", "act4performance") if hasattr(st, "secrets") else "act4performance"
 
 def get_scto_client():
     """
-    Create SurveyCTO client using the user's entered credentials (sidebar).
-    Stored only in session (no permanent storage).
+    Create SurveyCTO client using secrets first; fallback to sidebar/session.
     """
     if not _HAS_PYSURVEYCTO:
         return None
-    user = st.session_state.get("scto_user", "").strip()
-    pwd = st.session_state.get("scto_pass", "").strip()
+
+    # ✅ Prefer secrets
+    user = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "").strip()
+    pwd  = (st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else "").strip()
+
+    # Fallback to sidebar/session
+    if not user:
+        user = st.session_state.get("scto_user", "").strip()
+    if not pwd:
+        pwd = st.session_state.get("scto_pass", "").strip()
+
     if not user or not pwd:
         return None
+
     try:
         return pysurveycto.SurveyCTOObject(SCTO_SERVER, user, pwd)
     except Exception:
         return None
+
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def scto_get_attachment_bytes(url: str, user_key: str) -> Optional[bytes]:
@@ -381,10 +391,24 @@ sticky_close()
 # =============================
 with st.sidebar:
     st.subheader("SurveyCTO Login")
-    st.caption("Recommended: set ..streamlit/secrets.toml (SURVEYCTO_USER / SURVEYCTO_PASS).")
-    st.text_input("Username", key="scto_user")
-    st.text_input("Password", type="password", key="scto_pass")
-    st.caption("User must have permission to access attachments.")
+
+    s_user = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "")
+    s_pass = (st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else "")
+    has_secrets = bool(str(s_user).strip()) and bool(str(s_pass).strip())
+
+    if has_secrets:
+        st.success("✅ SurveyCTO credentials loaded from Secrets")
+        st.caption("No login required.")
+        # Optional: show server value (safe)
+        s_server = (st.secrets.get("SURVEYCTO_SERVER", "") if hasattr(st, "secrets") else "")
+        if str(s_server).strip():
+            st.caption(f"Server: {s_server}")
+    else:
+        st.warning("SurveyCTO secrets not found. Please login below.")
+        st.caption("Recommended: set .streamlit/secrets.toml (SURVEYCTO_USER / SURVEYCTO_PASS).")
+        st.text_input("Username", key="scto_user")
+        st.text_input("Password", type="password", key="scto_pass")
+        st.caption("User must have permission to access attachments.")
 
 # =============================
 # Load data
@@ -960,3 +984,4 @@ with gen:
         )
 
     card_close()
+
