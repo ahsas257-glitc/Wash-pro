@@ -327,7 +327,7 @@ defaults = {
     "Name of the monitor Engineer": row.get("A07_Monitor_name", ""),
     "Email of the monitor engineer": row.get("A12_Monitor_email", ""),
     "Name of the respondent (Participant / UNICEF / IPs)": row.get("A08_Respondent_name", ""),
-    "Sex of Respondent": row.get("A09_Respondent_sex_label", ""),
+    "Sex of Respondent": row.get("A09_Respondent_sex", ""),
     "Contact Number of the Respondent": format_af_phone_ui(row.get("A10_Respondent_phone", "")),
     "Email Address of the Respondent": na_if_empty_ui(row.get("A11_Respondent_email", "")),
     "Project Status": row.get("Project_Status", ""),
@@ -868,3 +868,4 @@ with gen:
         )
 
     card_close()
+
