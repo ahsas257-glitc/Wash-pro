@@ -15,6 +15,7 @@ from src.config import GOOGLE_SHEET_ID, TPM_COL
 from src.data_processing import open_worksheet, get_all_records, find_by_tpm_id
 from src.report_builder import build_tool6_full_report_docx
 from design.components.tool6_ui import topbar
+from src.surveycto_media import fetch_image, fetch_audio, get_scto_credentials
 
 from design.components.tool6_ui import (
     inject_tool6_design,
@@ -868,4 +869,5 @@ with gen:
         )
 
     card_close()
+
 
