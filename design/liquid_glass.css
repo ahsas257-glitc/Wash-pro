@@ -1,0 +1,354 @@
+/* =========================================================
+   LIQUID GLASS PRO v2 — Streamlit UI System
+   Covers: Cards • KPIs • Status • Containers • Alerts
+           Inputs • Buttons • Sidebar • DataFrame/DataEditor
+   Light: dark text   |  Dark: light text
+   ========================================================= */
+
+/* -----------------------------
+   1) Tokens — Base (shared)
+------------------------------ */
+:root{
+  --lg-radius-xl: 24px;
+  --lg-radius-lg: 18px;
+  --lg-radius-md: 14px;
+
+  --lg-blur-strong: 26px;
+  --lg-blur: 20px;
+
+  --lg-shadow: 0 22px 80px rgba(0,0,0,0.30);
+  --lg-shadow-soft: 0 14px 44px rgba(0,0,0,0.20);
+  --lg-shadow-hover: 0 40px 140px rgba(0,0,0,0.42);
+
+  --lg-focus: rgba(0,200,255,0.22);
+
+  /* accents (keep as RGB for overlays) */
+  --a-cyan: 0,200,255;
+  --a-orange: 255,150,0;
+  --a-purple: 165,90,255;
+  --a-green: 0,255,170;
+  --a-red: 255,70,70;
+
+  /* motion */
+  --lg-ease: cubic-bezier(.2,.8,.2,1);
+}
+
+/* -----------------------------
+   2) Theme Tokens — Dark (default vibe)
+   Dark: light content
+------------------------------ */
+html[data-theme="dark"]{
+  --lg-txt: rgba(255,255,255,0.94);
+  --lg-muted: rgba(255,255,255,0.72);
+
+  --lg-border: rgba(255,255,255,0.18);
+  --lg-border-strong: rgba(255,255,255,0.26);
+
+  --lg-surface: rgba(255,255,255,0.08);
+  --lg-surface-strong: rgba(255,255,255,0.12);
+
+  --lg-glass-bg: linear-gradient(135deg, var(--lg-surface-strong), var(--lg-surface));
+  --lg-glass-shadow: var(--lg-shadow);
+
+  --lg-chip-bg: rgba(255,255,255,0.08);
+  --lg-input-bg: rgba(0,0,0,0.34);
+
+  --lg-table-bg: rgba(255,255,255,0.06);
+  --lg-row-hover: rgba(255,255,255,0.06);
+
+  --lg-divider: rgba(255,255,255,0.12);
+}
+
+/* -----------------------------
+   3) Theme Tokens — Light
+   Light: dark content
+------------------------------ */
+html[data-theme="light"]{
+  --lg-txt: rgba(15,23,42,0.94);
+  --lg-muted: rgba(15,23,42,0.64);
+
+  --lg-border: rgba(15,23,42,0.12);
+  --lg-border-strong: rgba(15,23,42,0.18);
+
+  --lg-surface: rgba(255,255,255,0.70);
+  --lg-surface-strong: rgba(255,255,255,0.86);
+
+  --lg-glass-bg: linear-gradient(135deg, var(--lg-surface-strong), var(--lg-surface));
+  --lg-glass-shadow: 0 22px 80px rgba(2,6,23,0.14);
+
+  --lg-chip-bg: rgba(2,6,23,0.06);
+  --lg-input-bg: rgba(255,255,255,0.85);
+
+  --lg-table-bg: rgba(255,255,255,0.62);
+  --lg-row-hover: rgba(2,6,23,0.05);
+
+  --lg-divider: rgba(2,6,23,0.10);
+}
+
+/* -----------------------------
+   4) Base Typography / Readability
+------------------------------ */
+[data-testid="stAppViewContainer"]{
+  color: var(--lg-txt) !important;
+}
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] .stCaption{
+  color: var(--lg-muted) !important;
+}
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stAppViewContainer"] h4{
+  color: var(--lg-txt) !important;
+}
+
+/* -----------------------------
+   5) Luxury Glass Card Base
+------------------------------ */
+.lg-card{
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--lg-radius-xl);
+  border: 1px solid var(--lg-border);
+  background: var(--lg-glass-bg);
+  backdrop-filter: blur(var(--lg-blur-strong)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--lg-blur-strong)) saturate(180%);
+  box-shadow: var(--lg-glass-shadow);
+  transition: transform .28s var(--lg-ease), box-shadow .28s var(--lg-ease), border-color .28s var(--lg-ease), filter .28s var(--lg-ease);
+}
+
+.lg-card:hover{
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: var(--lg-shadow-hover);
+  border-color: var(--lg-border-strong);
+  filter: brightness(1.02);
+}
+
+.lg-card::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  pointer-events:none;
+  background:
+    radial-gradient(900px 520px at 12% 10%, rgba(var(--a-cyan),0.16), transparent 58%),
+    radial-gradient(760px 560px at 92% 18%, rgba(var(--a-orange),0.14), transparent 62%),
+    linear-gradient(180deg, rgba(255,255,255,0.10), transparent 60%);
+  opacity: .90;
+}
+
+.lg-card::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius: inherit;
+  pointer-events:none;
+  background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.18) 18%, transparent 38%, transparent 100%);
+  transform: translateX(-60%);
+  opacity: .45;
+}
+.lg-card:hover::after{
+  transform: translateX(60%);
+  transition: transform .90s var(--lg-ease);
+}
+
+.lg-card > *{ position: relative; z-index: 2; }
+.lg-pad{ padding: 18px 20px; }
+
+/* -----------------------------
+   6) Responsive Grid (3 → 2 → 1)
+------------------------------ */
+.lg-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 1100px){ .lg-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px){ .lg-grid{ grid-template-columns: 1fr; } }
+
+/* -----------------------------
+   7) KPI Card
+------------------------------ */
+.lg-kpi{ display:flex; align-items: stretch; justify-content: space-between; gap: 14px; }
+.lg-kpi-left{ display:flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lg-kpi-title{ font-size: .90rem; letter-spacing: .2px; color: var(--lg-muted) !important; margin: 0; }
+.lg-kpi-value{ font-size: 1.85rem; font-weight: 900; line-height: 1.05; margin: 0; color: var(--lg-txt) !important; }
+.lg-kpi-sub{ font-size: .88rem; color: var(--lg-muted) !important; margin: 0; }
+
+.lg-kpi-right{ display:flex; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: 10px; flex: 0 0 auto; }
+
+.lg-icon-badge{
+  width: 46px; height: 46px;
+  border-radius: 16px;
+  border: 1px solid var(--lg-border);
+  background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+  box-shadow: var(--lg-shadow-soft);
+  display:flex; align-items:center; justify-content:center;
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+}
+
+.lg-spark{
+  width: 120px; height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--lg-border);
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--lg-shadow-soft);
+  overflow:hidden;
+}
+.lg-spark svg{ width: 100%; height: 100%; display:block; opacity: .95; }
+
+/* KPI variants */
+.lg-variant-cyan   { border-top: 1px solid rgba(var(--a-cyan),0.42);   box-shadow: 0 44px 150px rgba(var(--a-cyan),0.12), var(--lg-glass-shadow); }
+.lg-variant-orange { border-top: 1px solid rgba(var(--a-orange),0.42); box-shadow: 0 44px 150px rgba(var(--a-orange),0.10), var(--lg-glass-shadow); }
+.lg-variant-purple { border-top: 1px solid rgba(var(--a-purple),0.40); box-shadow: 0 44px 150px rgba(var(--a-purple),0.10), var(--lg-glass-shadow); }
+.lg-variant-green  { border-top: 1px solid rgba(var(--a-green),0.36);  box-shadow: 0 44px 150px rgba(var(--a-green),0.09), var(--lg-glass-shadow); }
+
+/* -----------------------------
+   8) Status Cards
+------------------------------ */
+.lg-status{ display:flex; align-items:center; justify-content: space-between; gap: 12px; }
+.lg-status-left{ display:flex; align-items:center; gap: 10px; min-width: 0; }
+.lg-pill{
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--lg-border);
+  background: var(--lg-chip-bg);
+  font-size: .86rem;
+  font-weight: 800;
+  color: var(--lg-txt) !important;
+  white-space: nowrap;
+}
+.lg-status-title{ margin:0; font-weight: 900; letter-spacing: .2px; color: var(--lg-txt) !important; }
+.lg-status-desc{ margin: 4px 0 0 0; color: var(--lg-muted) !important; font-size: .92rem; }
+
+.lg-success{ border-top: 1px solid rgba(var(--a-green),0.48); }
+.lg-warning{ border-top: 1px solid rgba(var(--a-orange),0.48); }
+.lg-error{   border-top: 1px solid rgba(var(--a-red),0.46); }
+
+/* -----------------------------
+   9) Streamlit container(border=True) — premium
+------------------------------ */
+div[data-testid="stVerticalBlockBorderWrapper"]{
+  border-radius: var(--lg-radius-xl) !important;
+  border: 1px solid var(--lg-border) !important;
+  background: var(--lg-glass-bg) !important;
+  backdrop-filter: blur(var(--lg-blur)) saturate(170%);
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(170%);
+  box-shadow: var(--lg-shadow-soft);
+  overflow: hidden;
+}
+
+/* -----------------------------
+   10) Alerts — premium
+------------------------------ */
+div[data-testid="stAlert"]{
+  border-radius: 18px !important;
+  border: 1px solid var(--lg-border) !important;
+  background: var(--lg-glass-bg) !important;
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  box-shadow: var(--lg-shadow-soft);
+}
+
+/* -----------------------------
+   11) Inputs / Select / Textarea
+------------------------------ */
+div[data-baseweb="input"] > div,
+div[data-baseweb="select"] > div,
+div[data-baseweb="textarea"] textarea{
+  background: var(--lg-input-bg) !important;
+  border: 1px solid var(--lg-border) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+[data-testid="stAppViewContainer"] .stTextInput input:focus,
+[data-testid="stAppViewContainer"] .stTextArea textarea:focus,
+[data-testid="stAppViewContainer"] div[data-baseweb="select"] > div:focus-within{
+  box-shadow: 0 0 0 6px var(--lg-focus), var(--lg-shadow-soft) !important;
+  border-color: rgba(var(--a-cyan),0.44) !important;
+}
+
+/* -----------------------------
+   12) Buttons
+------------------------------ */
+button[kind="primary"]{
+  border-radius: 14px !important;
+  box-shadow: var(--lg-shadow-soft) !important;
+  transition: transform .18s var(--lg-ease), box-shadow .18s var(--lg-ease), filter .18s var(--lg-ease);
+}
+button[kind="primary"]:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--lg-shadow);
+  filter: brightness(1.02);
+}
+
+/* -----------------------------
+   13) Sidebar (optional luxury)
+------------------------------ */
+section[data-testid="stSidebar"]{
+  background: var(--lg-glass-bg) !important;
+  border-right: 1px solid var(--lg-border) !important;
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+}
+
+/* -----------------------------
+   14) DataFrame / DataEditor — standard glass table
+   Streamlit DOM changes often; this is best-effort but solid.
+------------------------------ */
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"]{
+  border-radius: var(--lg-radius-xl) !important;
+  border: 1px solid var(--lg-border) !important;
+  overflow: hidden !important;
+  background: var(--lg-table-bg) !important;
+  box-shadow: var(--lg-shadow-soft);
+}
+
+/* inner wrapper */
+div[data-testid="stDataFrame"] > div,
+div[data-testid="stDataEditor"] > div{
+  background: transparent !important;
+}
+
+/* try unify borders */
+div[data-testid="stDataFrame"] *,
+div[data-testid="stDataEditor"] *{
+  border-color: var(--lg-divider) !important;
+}
+
+/* Hover-like effect if supported */
+div[data-testid="stDataFrame"] tr:hover,
+div[data-testid="stDataEditor"] tr:hover{
+  background: var(--lg-row-hover) !important;
+}
+
+/* -----------------------------
+   15) Utility helpers
+------------------------------ */
+.lg-table-wrap{
+  overflow:hidden;
+  border-radius: var(--lg-radius-xl);
+  border: 1px solid var(--lg-border);
+  background: var(--lg-glass-bg);
+  backdrop-filter: blur(var(--lg-blur)) saturate(170%);
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(170%);
+  box-shadow: var(--lg-shadow);
+}
+
+.lg-table-head{
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--lg-border);
+  background:
+    radial-gradient(700px 280px at 16% 18%, rgba(var(--a-cyan),0.12), transparent 56%),
+    radial-gradient(620px 260px at 92% 25%, rgba(var(--a-orange),0.10), transparent 62%),
+    rgba(255,255,255,0.05);
+}
+.lg-table-head h4{ margin:0; font-weight: 900; color: var(--lg-txt) !important; }
+.lg-table-head .meta{ color: var(--lg-muted) !important; font-size: .86rem; }
