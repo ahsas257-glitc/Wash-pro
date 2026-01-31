@@ -6,13 +6,13 @@ import re
 from io import BytesIO
 from typing import Optional, Dict, Tuple, List
 from uuid import uuid4
+from urllib.parse import urlparse
 
 import streamlit as st
 import numpy as np
 import pandas as pd
 import requests
 from PIL import Image
-from requests.auth import HTTPBasicAuth
 
 # ============================================================
 # Internal project imports (DO NOT REMOVE)
@@ -21,6 +21,12 @@ from src.config import GOOGLE_SHEET_ID, TPM_COL
 from src.data_processing import get_row_cached
 from src.report_builder import build_tool6_full_report_docx
 from src.ui.wizard import Wizard, WizardConfig
+from src.integrations.surveycto_client import (
+    surveycto_login_ui,
+    load_auth_state,
+    is_logged_in,
+    surveycto_request,
+)
 
 # ✅ base_tool_ui only (no sticky_open/sticky_close)
 from design.components.base_tool_ui import (
@@ -42,7 +48,7 @@ apply_global_background("assets/images/Logo_of_PPC.png")
 project_root = os.path.dirname(os.path.dirname(__file__))
 
 # ============================================================
-# Optional: SurveyCTO SDK
+# Optional: SurveyCTO SDK (kept optional)
 # ============================================================
 try:
     import pysurveycto  # pip install pysurveycto
@@ -78,10 +84,8 @@ COL = {
     "VISIT_NUMBER": "A26_Visit_number",
 }
 
-
 def col(row: dict, key: str, default=""):
     return (row or {}).get(COL.get(key, ""), default)
-
 
 def gps_points_from_row(row: dict) -> str:
     lat = str(col(row, "GPS_LAT", "") or "").strip()
@@ -94,16 +98,13 @@ def gps_points_from_row(row: dict) -> str:
 def safe_str(x) -> str:
     return "" if x is None else str(x)
 
-
 def ensure_http(url: str) -> str:
     u = (url or "").strip()
     return u if u.startswith("http") else ""
 
-
 def na_if_empty_ui(raw) -> str:
     s0 = safe_str(raw).strip()
     return s0 if s0 else "N/A"
-
 
 def format_af_phone_ui(raw) -> str:
     s0 = re.sub(r"\D+", "", safe_str(raw))
@@ -114,7 +115,6 @@ def format_af_phone_ui(raw) -> str:
     if s0.startswith("93"):
         return f"+{s0}"
     return f"+93{s0}"
-
 
 def enforce_single_cover(selections: Dict[str, str]) -> Dict[str, str]:
     covers = [u for u, p in selections.items() if p == "Cover Page"]
@@ -133,13 +133,11 @@ def _looks_like_html(data: bytes) -> bool:
     head = (data or b"")[:300].lower()
     return b"<html" in head or b"<!doctype" in head
 
-
 def _to_clean_png_bytes(img_bytes: bytes) -> bytes:
     img = Image.open(BytesIO(img_bytes)).convert("RGB")
     out = BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
-
 
 def cover_suitability(img: Image.Image):
     w, h = img.size
@@ -168,32 +166,46 @@ def cover_suitability(img: Image.Image):
     return issues, {"w": w, "h": h, "ratio": ratio, "brightness": brightness, "sharpness": sharpness}
 
 # ============================================================
-# SurveyCTO Auth
+# SurveyCTO helpers (SINGLE SOURCE OF AUTH)
 # ============================================================
-def get_auth() -> Optional[HTTPBasicAuth]:
-    user = st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else ""
-    pwd = st.secrets.get("SURVEYCTO_PASS", "") if hasattr(st, "secrets") else ""
-    user = user or st.session_state.get("scto_user", "")
-    pwd = pwd or st.session_state.get("scto_pass", "")
-    return HTTPBasicAuth(user, pwd) if user and pwd else None
-
-
 def _is_scto_view_attachment(url: str) -> bool:
     return "surveycto.com/view/submission-attachment" in (url or "").lower()
 
+def _is_surveycto_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).netloc or "").lower()
+        return host.endswith("surveycto.com")
+    except Exception:
+        return False
 
-SCTO_SERVER = "act4performance"
-
+def _url_to_scto_path(url: str) -> str:
+    """
+    Convert full SurveyCTO URL to path for surveycto_request.
+    surveycto_request expects a *path* appended to BASE_URL inside surveycto_client.py.
+    """
+    p = urlparse(url)
+    path = (p.path or "").lstrip("/")
+    if p.query:
+        path = f"{path}?{p.query}"
+    return path
 
 def get_scto_client():
+    """
+    Optional pysurveycto object. We keep it because some deployments work best
+    for /view/submission-attachment via SDK.
+    """
     if not _HAS_PYSURVEYCTO:
         return None
-    user = st.session_state.get("scto_user", "").strip()
-    pwd = st.session_state.get("scto_pass", "").strip()
+
+    load_auth_state()
+    user = st.session_state.get("scto_username", "").strip()
+    pwd = st.session_state.get("scto_password", "").strip()
     if not user or not pwd:
         return None
+
     try:
-        return pysurveycto.SurveyCTOObject(SCTO_SERVER, user, pwd)
+        # Server name is inside surveycto_client.py; keep consistent:
+        return pysurveycto.SurveyCTOObject("act4performance", user, pwd)
     except Exception:
         return None
 
@@ -201,7 +213,10 @@ def get_scto_client():
 # Cached media loaders (PERFORMANCE CRITICAL)
 # ============================================================
 @st.cache_data(show_spinner=False, ttl=3600)
-def scto_get_attachment_bytes(url: str, user_key: str) -> Optional[bytes]:
+def scto_get_attachment_bytes(url: str, username: str) -> Optional[bytes]:
+    """
+    Try via pysurveycto if available for submission-attachment links.
+    """
     scto = get_scto_client()
     if scto is None:
         return None
@@ -213,68 +228,112 @@ def scto_get_attachment_bytes(url: str, user_key: str) -> Optional[bytes]:
     except Exception:
         return None
 
+def _plain_http_get(url: str, *, timeout: int) -> requests.Response:
+    return requests.get(url, timeout=timeout, allow_redirects=True)
+
+def _scto_http_get(url: str, *, timeout: int) -> requests.Response:
+    """
+    All SurveyCTO GET requests MUST go through surveycto_request,
+    so 401/403 auto resets login state.
+    """
+    path = _url_to_scto_path(url)
+    # surveycto_request builds BASE_URL + path internally
+    return surveycto_request("GET", path, timeout=timeout)
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_image_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], str]:
-    auth = get_auth()
-    if auth is None:
-        return False, None, "Missing SurveyCTO credentials"
+def fetch_image_cached(url: str, username: str) -> Tuple[bool, Optional[bytes], str]:
+    """
+    - SurveyCTO url => surveycto_request (single auth source)
+    - submission-attachment => try pysurveycto first, then fallback to surveycto_request
+    - non SurveyCTO => normal requests.get
+    """
+    try:
+        if not url or not url.startswith("http"):
+            return False, None, "Invalid URL"
 
-    if _is_scto_view_attachment(url):
-        b = scto_get_attachment_bytes(url, user_key)
-        if b:
+        if _is_surveycto_url(url):
+            if _is_scto_view_attachment(url):
+                b = scto_get_attachment_bytes(url, username)
+                if b:
+                    try:
+                        return True, _to_clean_png_bytes(b), "OK"
+                    except Exception:
+                        return False, None, "Invalid/unsupported image data (SDK)"
+
+            r = _scto_http_get(url, timeout=25)
+            if r.status_code >= 400:
+                return False, None, f"HTTP {r.status_code}"
+            if _looks_like_html(r.content):
+                return False, None, "HTML response (auth required)"
             try:
-                return True, _to_clean_png_bytes(b), "OK"
+                return True, _to_clean_png_bytes(r.content), "OK"
             except Exception:
                 return False, None, "Invalid/unsupported image data"
 
-    try:
-        r = requests.get(url, timeout=25, allow_redirects=True, auth=auth)
+        # Non SurveyCTO
+        r = _plain_http_get(url, timeout=25)
         if r.status_code >= 400:
             return False, None, f"HTTP {r.status_code}"
         if _looks_like_html(r.content):
-            return False, None, "HTML response (auth required)"
+            return False, None, "HTML response"
         try:
             return True, _to_clean_png_bytes(r.content), "OK"
         except Exception:
             return False, None, "Invalid/unsupported image data"
+
     except Exception as e:
         return False, None, str(e)
 
-
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_audio_cached(url: str, user_key: str) -> Tuple[bool, Optional[bytes], str, str]:
-    auth = get_auth()
-    if auth is None:
-        return False, None, "Missing SurveyCTO credentials", ""
-
-    if _is_scto_view_attachment(url):
-        b = scto_get_attachment_bytes(url, user_key)
-        if b:
-            return True, b, "OK", "audio/aac"
-
+def fetch_audio_cached(url: str, username: str) -> Tuple[bool, Optional[bytes], str, str]:
+    """
+    - SurveyCTO url => surveycto_request
+    - submission-attachment => try pysurveycto first
+    - non SurveyCTO => normal requests.get
+    """
     try:
-        r = requests.get(url, timeout=35, allow_redirects=True, auth=auth)
+        if not url or not url.startswith("http"):
+            return False, None, "Invalid URL", ""
+
+        if _is_surveycto_url(url):
+            if _is_scto_view_attachment(url):
+                b = scto_get_attachment_bytes(url, username)
+                if b:
+                    return True, b, "OK", "audio/aac"
+
+            r = _scto_http_get(url, timeout=35)
+            if r.status_code >= 400:
+                return False, None, f"HTTP {r.status_code}", ""
+            if _looks_like_html(r.content):
+                return False, None, "HTML response", ""
+            mime = (r.headers.get("Content-Type") or "audio/aac").split(";")[0]
+            return True, r.content, "OK", mime
+
+        # Non SurveyCTO
+        r = _plain_http_get(url, timeout=35)
         if r.status_code >= 400:
             return False, None, f"HTTP {r.status_code}", ""
         if _looks_like_html(r.content):
             return False, None, "HTML response", ""
         mime = (r.headers.get("Content-Type") or "audio/aac").split(";")[0]
         return True, r.content, "OK", mime
+
     except Exception as e:
         return False, None, str(e), ""
 
+def _cache_user_key() -> str:
+    load_auth_state()
+    return (st.session_state.get("scto_username") or "").strip() or "anon"
 
 def fetch_image(url: str) -> Tuple[bool, Optional[bytes], str]:
-    user_key = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "") or st.session_state.get("scto_user", "")
-    return fetch_image_cached(url, user_key=user_key or "user")
-
+    return fetch_image_cached(url, username=_cache_user_key())
 
 def fetch_audio(url: str) -> Tuple[bool, Optional[bytes], str, str]:
-    user_key = (st.secrets.get("SURVEYCTO_USER", "") if hasattr(st, "secrets") else "") or st.session_state.get("scto_user", "")
-    return fetch_audio_cached(url, user_key=user_key or "user")
+    return fetch_audio_cached(url, username=_cache_user_key())
 
-
+# ============================================================
+# Media normalization (KEEP)
+# ============================================================
 def normalize_media_url(url: str) -> str:
     u = (url or "").strip()
     if not u.startswith("http"):
@@ -291,7 +350,6 @@ def normalize_media_url(url: str) -> str:
         return f"https://drive.google.com/uc?export=download&id={fid}"
 
     return u
-
 
 def extract_photo_links(row: dict) -> List[Dict[str, str]]:
     links: List[Dict[str, str]] = []
@@ -316,7 +374,6 @@ def extract_photo_links(row: dict) -> List[Dict[str, str]]:
         seen.add(it["url"])
         uniq.append(it)
     return uniq
-
 
 def extract_audio_links(row: dict) -> List[Dict[str, str]]:
     links: List[Dict[str, str]] = []
@@ -398,7 +455,6 @@ def _resolve_cover_bytes() -> Optional[bytes]:
 
     return cover_bytes
 
-
 def _generate_docx(
     row: dict,
     *,
@@ -437,7 +493,7 @@ def _generate_docx(
     return True
 
 # ============================================================
-# Wizard instance (NO on_generate in WizardConfig)
+# Wizard instance
 # ============================================================
 wiz = Wizard(WizardConfig(tool_name="Tool 6", steps=STEPS, key_prefix="tool6"))
 
@@ -467,22 +523,19 @@ with st.container(border=True):
 # Sidebar — SurveyCTO Login
 # ============================================================
 with st.sidebar:
-    st.subheader("SurveyCTO Login")
-    st.text_input("Username", key="scto_user")
-    st.text_input("Password", type="password", key="scto_pass")
-    st.caption("Credentials are kept only in session.")
+    logged_in = surveycto_login_ui(in_sidebar=False)  # چون همینجا داخل sidebar هستیم
+
+if not logged_in:
+    st.warning("Please login via the sidebar to download images and audio from SurveyCTO")
+    # stop نکن؛ شاید کاربر فقط Google Sheet را بخواهد.
 
 # ============================================================
 # Load Google Sheet data (ONCE)
 # ============================================================
 @st.cache_data(show_spinner=False, ttl=600)
 def _load_tool6_row(sheet_id: str, tool: str, tpm_value: str, tpm_col: str):
-    return get_row_cached(
-        sheet_id,
-        tool,
-        tpm_id=tpm_value,
-        tpm_col=tpm_col,
-    )
+    return get_row_cached(sheet_id, tool, tpm_id=tpm_value, tpm_col=tpm_col)
+
 row = _load_tool6_row(GOOGLE_SHEET_ID, tool_name, tpm_id, TPM_COL)
 
 if not row:
@@ -684,6 +737,7 @@ if step == 1:
     if clicked_back or clicked_right:
         st.rerun()
     st.stop()
+
 # -------------------------------------------------
 # STEP 3 — Photos (Findings / Observations)
 # -------------------------------------------------
@@ -857,6 +911,7 @@ if step == 3:
     if clicked_back or clicked_right:
         st.rerun()
     st.stop()
+
 # -------------------------------------------------
 # STEP 5 — Components (Dynamic)
 # -------------------------------------------------
@@ -870,13 +925,11 @@ DEFAULT_COMPONENT_TITLES = [
     ("Construction of Stand taps", "Recommendations for stand taps"),
 ]
 
-
 def _reindex_components():
     comps = st.session_state.get("components_list", [])
     for i, c in enumerate(comps, start=1):
         c["comp_id"] = f"5.{i}"
     st.session_state["components_list"] = comps
-
 
 def _remove_component(uid: str):
     st.session_state["components_list"] = [c for c in st.session_state.get("components_list", []) if c.get("uid") != uid]
@@ -886,7 +939,6 @@ def _remove_component(uid: str):
         st.session_state.pop(k, None)
     _reindex_components()
     st.session_state["component_observations"] = []
-
 
 if step == 4:
     if not st.session_state["components_list"]:
